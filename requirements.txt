@@ -1,0 +1,4 @@
+streamlit==1.63.0
+qrcode[pil]==8.2
+yt-dlp[default]==2026.8.19
+deno==2.9.6
