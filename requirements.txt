@@ -3,3 +3,6 @@ qrcode[pil]==8.2
 cairosvg==2.8.2
 yt-dlp[default,curl-cffi]==2026.8.19
 deno==2.9.6
+imageio-ffmpeg==0.6.0
+websockets>=13,<17
+urllib3[socks]~=2.5.0

@@ -17,9 +17,8 @@ from database import (
     register_login_attempt,
     seed_users,
 )
-from qr_utils import is_valid_http_url, make_qr_png
-from vimeo_utils import download_vimeo_mp4, is_vimeo_url
-from youtube_utils import download_youtube_mp4, is_youtube_url
+from qr_utils import is_valid_http_url, make_qr_png, make_qr_with_logo_png
+from youtube_utils import download_youtube_mp3, download_youtube_mp4, is_youtube_url
 
 st.set_page_config(
     page_title="Utilitários",
@@ -43,9 +42,10 @@ def initialize_app() -> None:
     st.session_state.setdefault("authenticated", False)
     st.session_state.setdefault("auth_email", None)
 
-    st.session_state.setdefault("static_qr_bytes", None)
-    st.session_state.setdefault("static_qr_url", None)
-    st.session_state.setdefault("static_qr_filename", "qr_code_estatico")
+    st.session_state.setdefault("normal_qr_bytes", None)
+    st.session_state.setdefault("normal_qr_url", None)
+    st.session_state.setdefault("logo_qr_bytes", None)
+    st.session_state.setdefault("logo_qr_url", None)
 
     st.session_state.setdefault("yt_video_bytes", None)
     st.session_state.setdefault("yt_video_filename", None)
@@ -149,89 +149,133 @@ def render_header() -> None:
         st.button("Sair", on_click=logout, width="stretch")
 
 
-def render_qr_instant() -> None:
-    st.subheader("⚡ QR Code instantâneo")
-    st.write("Cole uma URL. O QR Code é atualizado automaticamente conforme o campo muda.")
+def render_qr_normal() -> None:
+    st.subheader("🔳 QR Code normal")
+    st.write("Informe o link e clique em Gerar QR Code.")
 
-    url = st.text_input(
-        "Link",
-        key="instant_qr_url",
-        placeholder="https://exemplo.com/pagina",
-    ).strip()
-
-    if not url:
-        st.info("Digite um link para gerar o QR Code.")
-        return
-
-    if not is_valid_http_url(url):
-        st.warning("Informe uma URL válida iniciada por http:// ou https://")
-        return
-
-    png_bytes = make_qr_png(url)
-    st.image(png_bytes, caption="QR Code gerado", width=320)
-    st.download_button(
-        "Baixar PNG",
-        data=png_bytes,
-        file_name="qr_code_instantaneo.png",
-        mime="image/png",
-        width="stretch",
-    )
-
-
-def render_qr_static() -> None:
-    st.subheader("🖼️ QR Code estático")
-    st.write(
-        "Informe o link e clique em Gerar. "
-        "O resultado permanece disponível na sessão até você gerar outro."
-    )
-
-    with st.form("static_qr_form"):
+    with st.form("normal_qr_form"):
         url = st.text_input(
             "Link",
             placeholder="https://exemplo.com/pagina",
         ).strip()
-        filename = st.text_input("Nome do arquivo", value="qr_code_estatico")
         submitted = st.form_submit_button("Gerar QR Code", width="stretch")
 
     if submitted:
         if not is_valid_http_url(url):
             st.error("Informe uma URL válida iniciada por http:// ou https://")
         else:
-            st.session_state.static_qr_bytes = make_qr_png(url)
-            st.session_state.static_qr_url = url
-            st.session_state.static_qr_filename = filename.strip() or "qr_code_estatico"
+            st.session_state.normal_qr_bytes = make_qr_png(url)
+            st.session_state.normal_qr_url = url
 
-    if st.session_state.static_qr_bytes:
+    if st.session_state.normal_qr_bytes:
         st.image(
-            st.session_state.static_qr_bytes,
-            caption=st.session_state.static_qr_url,
+            st.session_state.normal_qr_bytes,
+            caption=st.session_state.normal_qr_url,
             width=320,
         )
-        safe_name = "".join(
-            c
-            for c in st.session_state.get("static_qr_filename", "qr_code_estatico")
-            if c.isalnum() or c in {"-", "_"}
-        ) or "qr_code_estatico"
         st.download_button(
             "Baixar PNG",
-            data=st.session_state.static_qr_bytes,
-            file_name=f"{safe_name}.png",
+            data=st.session_state.normal_qr_bytes,
+            file_name="qr_code.png",
             mime="image/png",
             width="stretch",
         )
 
 
+def render_qr_with_logo() -> None:
+    st.subheader("🎨 QR Code com logotipo")
+    st.write(
+        "Informe o link e envie seu logotipo. A imagem será redimensionada "
+        "e colocada no centro do QR Code, mantendo o fundo original."
+    )
+
+    with st.form("logo_qr_form"):
+        url = st.text_input(
+            "Link",
+            placeholder="https://exemplo.com/pagina",
+            key="logo_qr_input_url",
+        ).strip()
+        logo_file = st.file_uploader(
+            "Logotipo",
+            type=["png", "jpg", "jpeg", "svg"],
+            help="Formatos aceitos: PNG, JPG, JPEG ou SVG. Máximo de 5 MB.",
+        )
+        submitted = st.form_submit_button(
+            "Gerar QR Code com logotipo",
+            width="stretch",
+        )
+
+    if submitted:
+        if not is_valid_http_url(url):
+            st.error("Informe uma URL válida iniciada por http:// ou https://")
+        elif logo_file is None:
+            st.error("Envie um logotipo PNG, JPG, JPEG ou SVG.")
+        else:
+            try:
+                with st.spinner(
+                    "Gerando o QR Code com logotipo..."
+                ):
+                    st.session_state.logo_qr_bytes = make_qr_with_logo_png(
+                        url,
+                        logo_file.getvalue(),
+                        logo_file.name,
+                    )
+                st.session_state.logo_qr_url = url
+            except (ValueError, RuntimeError) as exc:
+                st.session_state.logo_qr_bytes = None
+                st.session_state.logo_qr_url = None
+                st.error(str(exc))
+
+    if st.session_state.logo_qr_bytes:
+        st.image(
+            st.session_state.logo_qr_bytes,
+            caption=st.session_state.logo_qr_url,
+            width=360,
+        )
+        st.download_button(
+            "Baixar PNG",
+            data=st.session_state.logo_qr_bytes,
+            file_name="qr_code_com_logo.png",
+            mime="image/png",
+            width="stretch",
+        )
+
+
+
 def render_youtube_downloader() -> None:
-    st.subheader("🎬 Baixar vídeo do YouTube")
+    st.subheader("🎬 Baixar do YouTube")
     st.caption("Use apenas em vídeos que você possui ou tem autorização para baixar.")
+
+    # O formato fica fora do formulário para que a interface seja atualizada
+    # imediatamente. Ao selecionar MP3, a qualidade do vídeo desaparece.
+    media_type = st.radio(
+        "Formato",
+        ["Vídeo MP4", "Áudio MP3"],
+        horizontal=True,
+        key="youtube_media_type",
+    )
 
     with st.form("youtube_form"):
         url = st.text_input(
             "Link do vídeo",
             placeholder="https://www.youtube.com/watch?v=...",
+            key="youtube_url",
         ).strip()
-        quality = st.selectbox("Qualidade máxima", [360, 480, 720, 1080], index=2)
-        submitted = st.form_submit_button("Preparar MP4", width="stretch")
+
+        if media_type == "Vídeo MP4":
+            quality = st.selectbox(
+                "Qualidade máxima do vídeo",
+                [360, 480, 720, 1080],
+                index=2,
+                format_func=lambda value: f"{value}p",
+            )
+            submit_label = "Preparar vídeo MP4"
+        else:
+            quality = None
+            st.caption("🎵 Para MP3 será utilizado o melhor áudio disponível.")
+            submit_label = "Preparar áudio MP3"
+
+        submitted = st.form_submit_button(submit_label, width="stretch")
 
     if submitted:
         st.session_state.yt_video_bytes = None
@@ -242,98 +286,168 @@ def render_youtube_downloader() -> None:
             st.error("Informe um link válido do YouTube.")
             return
 
-        with st.spinner("Processando o vídeo..."):
-            try:
-                video_bytes, filename, metadata = download_youtube_mp4(url, quality)
-            except Exception as exc:
-                st.error(str(exc))
-                return
+        progress_bar = st.progress(0, text="Preparando download...")
+        status_text = st.empty()
 
-        st.session_state.yt_video_bytes = video_bytes
+        progress_state = {
+            "active_files": {},
+            "finished_files": set(),
+            "last_value": 0,
+        }
+
+        def update_progress(value: int, text: str) -> None:
+            value = max(progress_state["last_value"], min(int(value), 100))
+            progress_state["last_value"] = value
+            progress_bar.progress(value, text=text)
+
+        def progress_callback(data: dict) -> None:
+            status = data.get("status")
+
+            if status == "downloading":
+                filename = str(data.get("filename") or "arquivo")
+
+                if filename not in progress_state["active_files"]:
+                    progress_state["active_files"][filename] = len(
+                        progress_state["active_files"]
+                    )
+
+                file_index = progress_state["active_files"][filename]
+                downloaded = data.get("downloaded_bytes") or 0
+                total = data.get("total_bytes") or data.get("total_bytes_estimate") or 0
+
+                if total > 0:
+                    part_percent = min(downloaded / total, 1.0)
+                    percent_text = f"{part_percent * 100:.1f}%"
+                else:
+                    part_percent = 0.0
+                    percent_text = "..."
+
+                # MP3 normalmente possui um único download; MP4 em 1080p
+                # normalmente possui vídeo e áudio separados.
+                if media_type == "Áudio MP3":
+                    value = int(part_percent * 80)
+                else:
+                    base = min(file_index * 40, 80)
+                    value = int(base + (part_percent * 40))
+                    value = min(value, 85)
+
+                update_progress(
+                    max(value, 1),
+                    f"Baixando do YouTube: {percent_text}",
+                )
+
+                if downloaded > 0:
+                    downloaded_mb = downloaded / (1024 * 1024)
+                    if total > 0:
+                        total_mb = total / (1024 * 1024)
+                        status_text.caption(
+                            f"⬇️ Arquivo atual: {downloaded_mb:.1f} MB "
+                            f"de {total_mb:.1f} MB"
+                        )
+                    else:
+                        status_text.caption(
+                            f"⬇️ Arquivo atual: {downloaded_mb:.1f} MB baixados"
+                        )
+
+            elif status == "finished":
+                filename = str(data.get("filename") or "arquivo")
+                progress_state["finished_files"].add(filename)
+
+                if media_type == "Áudio MP3":
+                    value = 80
+                else:
+                    value = min(40 * len(progress_state["finished_files"]), 85)
+
+                update_progress(value, "Download concluído. Preparando arquivo...")
+                status_text.caption("✅ Parte baixada com sucesso.")
+
+            elif status == "postprocessing":
+                update_progress(90, "Processando com FFmpeg...")
+
+                if media_type == "Áudio MP3":
+                    status_text.caption("🎵 Convertendo o áudio para MP3...")
+                else:
+                    status_text.caption("🎬 Juntando/processando vídeo e áudio...")
+
+        try:
+            if media_type == "Áudio MP3":
+                media_bytes, filename, metadata = download_youtube_mp3(
+                    url,
+                    progress_callback=progress_callback,
+                )
+            else:
+                media_bytes, filename, metadata = download_youtube_mp4(
+                    url,
+                    int(quality or 720),
+                    progress_callback=progress_callback,
+                )
+        except Exception as exc:
+            progress_bar.empty()
+            status_text.empty()
+            st.error(str(exc))
+            return
+
+        update_progress(100, "Arquivo pronto para baixar!")
+        status_text.success("✅ Processamento concluído.")
+
+        st.session_state.yt_video_bytes = media_bytes
         st.session_state.yt_video_filename = filename
         st.session_state.yt_video_meta = metadata
-        st.success("Vídeo preparado com sucesso.")
 
     if st.session_state.yt_video_bytes:
         meta = st.session_state.yt_video_meta or {}
+        filename = st.session_state.yt_video_filename or "youtube.bin"
+        is_mp3 = filename.lower().endswith(".mp3")
+
+        st.divider()
+        st.success("Arquivo preparado com sucesso!")
+
         if meta.get("title"):
             st.write(f"**Título:** {meta['title']}")
+
         if meta.get("uploader"):
             st.write(f"**Canal:** {meta['uploader']}")
-        if meta.get("filesize"):
-            st.write(f"**Tamanho:** {meta['filesize'] / (1024 * 1024):.1f} MB")
 
-        st.download_button(
-            "⬇️ Baixar MP4",
-            data=st.session_state.yt_video_bytes,
-            file_name=st.session_state.yt_video_filename or "video.mp4",
-            mime="video/mp4",
-            width="stretch",
-        )
-
-    st.info(
-        "Observação: downloads do YouTube podem falhar em alguns vídeos por "
-        "bloqueios do próprio YouTube, autenticação ou limitações de rede."
-    )
-
-
-def render_vimeo_downloader() -> None:
-    st.subheader("🎥 Baixar vídeo do Vimeo")
-    st.caption("Cole o link do Vimeo. O app prepara o vídeo em MP4.")
-
-    with st.form("vimeo_form"):
-        url = st.text_input(
-            "Link do vídeo do Vimeo",
-            placeholder="https://vimeo.com/868438346?fl=pl&fe=cm",
-        ).strip()
-        submitted = st.form_submit_button("Preparar MP4", width="stretch")
-
-    if submitted:
-        st.session_state.vimeo_video_bytes = None
-        st.session_state.vimeo_video_filename = None
-        st.session_state.vimeo_video_meta = None
-
-        if not is_vimeo_url(url):
-            st.error("Informe um link válido do Vimeo.")
-            return
-
-        with st.spinner("Processando o vídeo do Vimeo..."):
-            try:
-                video_bytes, filename, metadata = download_vimeo_mp4(url)
-            except Exception as exc:
-                st.error(str(exc))
-                return
-
-        st.session_state.vimeo_video_bytes = video_bytes
-        st.session_state.vimeo_video_filename = filename
-        st.session_state.vimeo_video_meta = metadata
-        st.success("Vídeo preparado com sucesso.")
-
-    if st.session_state.vimeo_video_bytes:
-        meta = st.session_state.vimeo_video_meta or {}
-
-        if meta.get("title"):
-            st.write(f"**Título:** {meta['title']}")
-        if meta.get("uploader"):
-            st.write(f"**Autor:** {meta['uploader']}")
         if meta.get("duration"):
             duration = int(meta["duration"])
             minutes, seconds = divmod(duration, 60)
-            st.write(f"**Duração:** {minutes}:{seconds:02d}")
+            hours, minutes = divmod(minutes, 60)
+
+            if hours:
+                duration_text = f"{hours}:{minutes:02d}:{seconds:02d}"
+            else:
+                duration_text = f"{minutes}:{seconds:02d}"
+
+            st.write(f"**Duração:** {duration_text}")
+
+        if not is_mp3 and meta.get("height"):
+            st.write(f"**Resolução:** {meta['height']}p")
+
         if meta.get("filesize"):
-            st.write(f"**Tamanho:** {meta['filesize'] / (1024 * 1024):.1f} MB")
+            size_mb = meta["filesize"] / (1024 * 1024)
+            st.write(f"**Tamanho:** {size_mb:.1f} MB")
 
         st.download_button(
-            "⬇️ Baixar MP4",
-            data=st.session_state.vimeo_video_bytes,
-            file_name=st.session_state.vimeo_video_filename or "video_vimeo.mp4",
-            mime="video/mp4",
+            "⬇️ Baixar MP3" if is_mp3 else "⬇️ Baixar MP4",
+            data=st.session_state.yt_video_bytes,
+            file_name=filename,
+            mime="audio/mpeg" if is_mp3 else "video/mp4",
             width="stretch",
         )
 
     st.info(
-        "Vídeos privados, protegidos por senha ou que exigem login no Vimeo "
-        "podem precisar de autenticação adicional."
+        "O YouTube altera frequentemente os mecanismos de acesso aos vídeos. "
+        "Alguns conteúdos podem exigir autenticação ou validações adicionais."
+    )
+
+def render_vimeo_maintenance() -> None:
+    st.subheader("🎥 Vimeo — Em Manutenção")
+    st.warning(
+        "🚧 O módulo de download do Vimeo está temporariamente desativado e em manutenção."
+    )
+    st.info(
+        "Estamos aguardando uma solução estável para o acesso aos vídeos do Vimeo. "
+        "As demais ferramentas do sistema continuam funcionando normalmente."
     )
 
 
@@ -541,10 +655,10 @@ def main() -> None:
     render_header()
 
     modules = [
-        "QR Code instantâneo",
-        "QR Code estático",
+        "QR Code normal",
+        "QR Code com logotipo",
         "Baixar vídeo do YouTube",
-        "Baixar vídeo do Vimeo",
+        "Vimeo (Em Manutenção)",
     ]
 
     # O módulo simplesmente não existe na navegação de quem tem dev = 0.
@@ -560,14 +674,14 @@ def main() -> None:
 
     st.divider()
 
-    if module == "QR Code instantâneo":
-        render_qr_instant()
-    elif module == "QR Code estático":
-        render_qr_static()
+    if module == "QR Code normal":
+        render_qr_normal()
+    elif module == "QR Code com logotipo":
+        render_qr_with_logo()
     elif module == "Baixar vídeo do YouTube":
         render_youtube_downloader()
-    elif module == "Baixar vídeo do Vimeo":
-        render_vimeo_downloader()
+    elif module == "Vimeo (Em Manutenção)":
+        render_vimeo_maintenance()
     elif module == "Gerenciar acessos":
         render_access_manager()
 
