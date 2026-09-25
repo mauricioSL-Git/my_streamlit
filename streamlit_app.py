@@ -20,7 +20,12 @@ from database import (
     seed_users,
 )
 from qr_utils import is_valid_http_url, make_qr_png, make_qr_with_logo_png
-from youtube_utils import download_youtube_mp3, download_youtube_mp4, is_youtube_url
+from youtube_utils import (
+    cleanup_youtube_output,
+    download_youtube_mp3,
+    download_youtube_mp4,
+    is_youtube_url,
+)
 from social_media_utils import (
     download_facebook_mp3,
     download_facebook_mp4,
@@ -165,6 +170,24 @@ def fa_user_line(icon_class: str, text: str) -> None:
     )
 
 
+def _make_deferred_file_reader(path: str | Path):
+    """Abre o arquivo somente quando o usuário clicar em baixar."""
+    media_path = Path(path)
+
+    def _open_file():
+        if not media_path.exists():
+            raise FileNotFoundError("O arquivo temporário expirou. Prepare o download novamente.")
+        return media_path.open("rb")
+
+    return _open_file
+
+
+def _cleanup_session_media(value) -> None:
+    """Limpa apenas arquivos temporários criados pelo downloader do YouTube."""
+    if isinstance(value, (str, Path)):
+        cleanup_youtube_output(value)
+
+
 def initialize_app() -> None:
     init_db()
 
@@ -258,6 +281,7 @@ def logout() -> None:
     st.session_state.authenticated = False
     st.session_state.auth_email = None
 
+    _cleanup_session_media(st.session_state.get("yt_video_bytes"))
     st.session_state.yt_video_bytes = None
     st.session_state.yt_video_filename = None
     st.session_state.yt_video_meta = None
@@ -608,6 +632,8 @@ def _render_media_downloader(
         bytes_key = f"{state_prefix}_video_bytes"
         filename_key = f"{state_prefix}_video_filename"
         meta_key = f"{state_prefix}_video_meta"
+        if platform_key == "yt":
+            _cleanup_session_media(st.session_state.get(bytes_key))
         st.session_state[bytes_key] = None
         st.session_state[filename_key] = None
         st.session_state[meta_key] = None
@@ -725,8 +751,8 @@ def _render_media_downloader(
         st.session_state[meta_key] = metadata
         end_processing(platform_key)
 
-    media_bytes = st.session_state.get(f"{state_prefix}_video_bytes")
-    if media_bytes:
+    media_data = st.session_state.get(f"{state_prefix}_video_bytes")
+    if media_data:
         meta = st.session_state.get(f"{state_prefix}_video_meta") or {}
         filename = st.session_state.get(f"{state_prefix}_video_filename") or f"{platform_key}.bin"
         is_mp3 = filename.lower().endswith(".mp3")
@@ -753,11 +779,25 @@ def _render_media_downloader(
             size_mb = meta["filesize"] / (1024 * 1024)
             st.write(f"**Tamanho:** {size_mb:.1f} MB")
 
+        if isinstance(media_data, (str, Path)):
+            media_path = Path(media_data)
+            if not media_path.exists():
+                st.warning("O arquivo temporário expirou. Prepare o download novamente.")
+                _cleanup_session_media(media_data)
+                st.session_state[f"{state_prefix}_video_bytes"] = None
+                return
+            download_data = _make_deferred_file_reader(media_path)
+            download_click = "ignore"
+        else:
+            # Instagram/Facebook ainda retornam bytes pelo yt-dlp.
+            download_data = media_data
+            download_click = release_all_controls
+
         st.download_button(
             "Baixar MP3" if is_mp3 else "Baixar MP4",
             icon=":material/download:",
-            on_click=release_all_controls,
-            data=media_bytes,
+            on_click=download_click,
+            data=download_data,
             file_name=filename,
             mime="audio/mpeg" if is_mp3 else "video/mp4",
             width="stretch",
