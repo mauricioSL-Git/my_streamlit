@@ -158,14 +158,14 @@ def _common_options(
         "concurrent_fragment_downloads": 4,
         "socket_timeout": 30,
         "js_runtimes": _javascript_runtimes(),
-        "extractor_args": {
-            "youtube": {
-                "player_client": [
-                    "default",
-                    "web_embedded",
-                ],
-            }
-        },
+        #"extractor_args": {
+        #    "youtube": {
+        #        "player_client": [
+        #            "default",
+        #            "web_embedded",
+        #        ],
+        #    }
+        #},
     }
 
     if progress_callback is not None:
