@@ -12,11 +12,42 @@ from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
 # Limites do aplicativo
-MAX_VIDEO_BYTES = 750 * 1024 * 1024  # 750 MB para MP4
+MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB para MP4
 MAX_AUDIO_BYTES = 250 * 1024 * 1024  # 250 MB para MP3
 ALLOWED_HEIGHTS = {360, 480, 720, 1080, 1440, 2160}
 
 ProgressCallback = Callable[[dict], None]
+
+
+def _is_certificate_error(exc: BaseException) -> bool:
+    detail = str(exc).lower()
+    return any(
+        term in detail
+        for term in (
+            "certificate_verify_failed",
+            "certificate verify failed",
+            "self-signed certificate",
+            "self signed certificate",
+            "curl: (60)",
+            "peer_failed_verification",
+        )
+    )
+
+
+def _extract_with_ssl_fallback(url: str, options: dict) -> dict:
+    """Executa o yt-dlp com SSL normal e só relaxa a validação em erro de certificado."""
+    try:
+        with YoutubeDL(options) as ydl:
+            return ydl.extract_info(url.strip(), download=True)
+    except DownloadError as exc:
+        if not _is_certificate_error(exc):
+            raise
+
+        fallback_options = dict(options)
+        fallback_options["nocheckcertificate"] = True
+
+        with YoutubeDL(fallback_options) as ydl:
+            return ydl.extract_info(url.strip(), download=True)
 
 
 def is_youtube_url(value: str) -> bool:
@@ -255,8 +286,7 @@ def download_youtube_mp4(
         )
 
         try:
-            with YoutubeDL(options) as ydl:
-                info = ydl.extract_info(url.strip(), download=True)
+            info = _extract_with_ssl_fallback(url, options)
         except DownloadError as exc:
             raise _friendly_download_error(exc) from exc
 
@@ -265,7 +295,7 @@ def download_youtube_mp4(
 
         if size > MAX_VIDEO_BYTES:
             raise RuntimeError(
-                "O vídeo final ultrapassa o limite de 750 MB deste app."
+                "O vídeo final ultrapassa o limite de 2 GB deste app."
             )
 
         title = _safe_filename(str(info.get("title") or output_path.stem))
@@ -310,8 +340,7 @@ def download_youtube_mp3(
         )
 
         try:
-            with YoutubeDL(options) as ydl:
-                info = ydl.extract_info(url.strip(), download=True)
+            info = _extract_with_ssl_fallback(url, options)
         except DownloadError as exc:
             raise _friendly_download_error(exc) from exc
 
