@@ -20,12 +20,9 @@ from database import (
     seed_users,
 )
 from qr_utils import is_valid_http_url, make_qr_png, make_qr_with_logo_png
-from youtube_utils import (
-    cleanup_youtube_output,
-    download_youtube_mp3,
-    download_youtube_mp4,
-    is_youtube_url,
-)
+from base64_utils import decode_base64_text, encode_text_base64
+from youtube_utils import download_youtube_mp3, download_youtube_mp4, is_youtube_url
+from suno_utils import download_suno_mp3, is_suno_url
 from social_media_utils import (
     download_facebook_mp3,
     download_facebook_mp4,
@@ -145,6 +142,16 @@ def inject_global_styles() -> None:
                 font-weight: 400;
             }
             .st-key-selected_module div[role="radiogroup"] > label:nth-child(6) p::before {
+                content: "\\f001";
+                font-family: "Font Awesome 6 Free";
+                font-weight: 900;
+            }
+            .st-key-selected_module div[role="radiogroup"] > label:nth-child(7) p::before {
+                content: "\\f121";
+                font-family: "Font Awesome 6 Free";
+                font-weight: 900;
+            }
+            .st-key-selected_module div[role="radiogroup"] > label:nth-child(8) p::before {
                 content: "\\f0c0";
                 font-family: "Font Awesome 6 Free";
                 font-weight: 900;
@@ -168,24 +175,6 @@ def fa_user_line(icon_class: str, text: str) -> None:
         f'<div class="inova-user-row"><i class="{escape(icon_class)}"></i><strong>{escape(text)}</strong></div>',
         unsafe_allow_html=True,
     )
-
-
-def _make_deferred_file_reader(path: str | Path):
-    """Abre o arquivo somente quando o usuário clicar em baixar."""
-    media_path = Path(path)
-
-    def _open_file():
-        if not media_path.exists():
-            raise FileNotFoundError("O arquivo temporário expirou. Prepare o download novamente.")
-        return media_path.open("rb")
-
-    return _open_file
-
-
-def _cleanup_session_media(value) -> None:
-    """Limpa apenas arquivos temporários criados pelo downloader do YouTube."""
-    if isinstance(value, (str, Path)):
-        cleanup_youtube_output(value)
 
 
 def initialize_app() -> None:
@@ -219,6 +208,14 @@ def initialize_app() -> None:
     st.session_state.setdefault("facebook_video_bytes", None)
     st.session_state.setdefault("facebook_video_filename", None)
     st.session_state.setdefault("facebook_video_meta", None)
+
+    st.session_state.setdefault("suno_audio_bytes", None)
+    st.session_state.setdefault("suno_audio_filename", None)
+    st.session_state.setdefault("suno_audio_meta", None)
+
+    st.session_state.setdefault("base64_encoded_value", None)
+    st.session_state.setdefault("base64_decoded_bytes", None)
+    st.session_state.setdefault("base64_decoded_text", None)
 
     st.session_state.setdefault("processing_locked", False)
     st.session_state.setdefault("processing_owner", None)
@@ -281,7 +278,6 @@ def logout() -> None:
     st.session_state.authenticated = False
     st.session_state.auth_email = None
 
-    _cleanup_session_media(st.session_state.get("yt_video_bytes"))
     st.session_state.yt_video_bytes = None
     st.session_state.yt_video_filename = None
     st.session_state.yt_video_meta = None
@@ -292,6 +288,13 @@ def logout() -> None:
     st.session_state.facebook_video_bytes = None
     st.session_state.facebook_video_filename = None
     st.session_state.facebook_video_meta = None
+
+    st.session_state.base64_encoded_value = None
+    st.session_state.base64_decoded_bytes = None
+    st.session_state.base64_decoded_text = None
+    st.session_state.pop("base64_encode_input", None)
+    st.session_state.pop("base64_decode_input", None)
+
     st.session_state.processing_locked = False
     st.session_state.processing_owner = None
     st.session_state.processing_jobs = {}
@@ -632,8 +635,6 @@ def _render_media_downloader(
         bytes_key = f"{state_prefix}_video_bytes"
         filename_key = f"{state_prefix}_video_filename"
         meta_key = f"{state_prefix}_video_meta"
-        if platform_key == "yt":
-            _cleanup_session_media(st.session_state.get(bytes_key))
         st.session_state[bytes_key] = None
         st.session_state[filename_key] = None
         st.session_state[meta_key] = None
@@ -751,8 +752,8 @@ def _render_media_downloader(
         st.session_state[meta_key] = metadata
         end_processing(platform_key)
 
-    media_data = st.session_state.get(f"{state_prefix}_video_bytes")
-    if media_data:
+    media_bytes = st.session_state.get(f"{state_prefix}_video_bytes")
+    if media_bytes:
         meta = st.session_state.get(f"{state_prefix}_video_meta") or {}
         filename = st.session_state.get(f"{state_prefix}_video_filename") or f"{platform_key}.bin"
         is_mp3 = filename.lower().endswith(".mp3")
@@ -779,25 +780,11 @@ def _render_media_downloader(
             size_mb = meta["filesize"] / (1024 * 1024)
             st.write(f"**Tamanho:** {size_mb:.1f} MB")
 
-        if isinstance(media_data, (str, Path)):
-            media_path = Path(media_data)
-            if not media_path.exists():
-                st.warning("O arquivo temporário expirou. Prepare o download novamente.")
-                _cleanup_session_media(media_data)
-                st.session_state[f"{state_prefix}_video_bytes"] = None
-                return
-            download_data = _make_deferred_file_reader(media_path)
-            download_click = "ignore"
-        else:
-            # Instagram/Facebook ainda retornam bytes pelo yt-dlp.
-            download_data = media_data
-            download_click = release_all_controls
-
         st.download_button(
             "Baixar MP3" if is_mp3 else "Baixar MP4",
             icon=":material/download:",
-            on_click=download_click,
-            data=download_data,
+            on_click=release_all_controls,
+            data=media_bytes,
             file_name=filename,
             mime="audio/mpeg" if is_mp3 else "video/mp4",
             width="stretch",
@@ -844,6 +831,307 @@ def render_facebook_downloader() -> None:
         download_mp4=download_facebook_mp4,
         download_mp3=download_facebook_mp3,
     )
+
+
+def render_suno_downloader() -> None:
+    owner = "suno"
+    fa_heading("fa-solid fa-music", "Baixar do Suno")
+    st.caption(
+        "Cole um link compartilhado do Suno. O módulo prepara o áudio em MP3. "
+        "Use apenas músicas que você possui ou tem autorização para baixar."
+    )
+
+    busy = is_processing()
+    active = busy and st.session_state.get("processing_owner") == owner
+
+    with st.form("suno_form"):
+        url = st.text_input(
+            "Link da música do Suno",
+            placeholder="https://suno.com/song/... ou https://suno.com/s/...",
+            key="suno_url",
+            disabled=busy,
+        ).strip()
+        st.caption("Formato de saída: MP3. O melhor áudio público disponível será utilizado.")
+
+        action_col, cancel_col = st.columns([3, 1])
+        with action_col:
+            submitted = st.form_submit_button(
+                "Preparar MP3",
+                icon=":material/audio_file:",
+                width="stretch",
+                disabled=busy,
+            )
+        with cancel_col:
+            st.form_submit_button(
+                "Cancelar",
+                icon=":material/cancel:",
+                width="stretch",
+                disabled=not active,
+                on_click=cancel_processing,
+                args=(owner,),
+            )
+
+    if submitted:
+        begin_processing(owner, {"url": url})
+        st.rerun()
+
+    job = get_processing_job(owner)
+    if active and job:
+        st.session_state.suno_audio_bytes = None
+        st.session_state.suno_audio_filename = None
+        st.session_state.suno_audio_meta = None
+
+        job_url = str(job.get("url") or "").strip()
+        if not is_suno_url(job_url):
+            st.error("Informe um link válido de música do Suno.")
+            end_processing(owner)
+            st.rerun()
+
+        progress_bar = st.progress(4, text="Validando link do Suno...")
+        status_text = st.empty()
+        status_text.caption("Localizando a música e o áudio disponível...")
+        progress_state = {"last_value": 4}
+
+        def update_progress(value: int, text: str) -> None:
+            value = max(progress_state["last_value"], min(int(value), 100))
+            progress_state["last_value"] = value
+            progress_bar.progress(value, text=text)
+
+        def progress_callback(data: dict) -> None:
+            if (
+                not st.session_state.get("processing_locked", False)
+                or st.session_state.get("processing_owner") != owner
+            ):
+                raise RuntimeError("__PROCESSING_CANCELLED__")
+
+            status = data.get("status")
+            if status == "resolving":
+                update_progress(int(data.get("percent") or 8), "Consultando o Suno...")
+                status_text.caption("Obtendo metadados da música...")
+            elif status == "downloading":
+                downloaded = int(data.get("downloaded_bytes") or 0)
+                total = data.get("total_bytes")
+                if total:
+                    ratio = min(downloaded / max(int(total), 1), 1.0)
+                    update_progress(20 + int(ratio * 65), "Baixando áudio do Suno...")
+                    status_text.caption(
+                        f"Áudio: {downloaded / (1024 * 1024):.1f} MB de "
+                        f"{int(total) / (1024 * 1024):.1f} MB"
+                    )
+                else:
+                    update_progress(
+                        min(80, progress_state["last_value"] + 1),
+                        "Baixando áudio do Suno...",
+                    )
+                    status_text.caption(
+                        f"Áudio: {downloaded / (1024 * 1024):.1f} MB baixados"
+                    )
+            elif status == "postprocessing":
+                update_progress(int(data.get("percent") or 90), "Convertendo para MP3...")
+                status_text.caption("Extraindo o áudio do vídeo com FFmpeg...")
+            elif status == "finished":
+                update_progress(100, "MP3 pronto para baixar!")
+                status_text.success("Processamento concluído.")
+
+        try:
+            media_bytes, filename, metadata = download_suno_mp3(
+                job_url, progress_callback=progress_callback
+            )
+        except Exception as exc:
+            progress_bar.empty()
+            status_text.empty()
+            if "__PROCESSING_CANCELLED__" in str(exc):
+                st.info("Processamento cancelado.")
+            else:
+                st.error(str(exc))
+            end_processing(owner)
+            return
+
+        st.session_state.suno_audio_bytes = media_bytes
+        st.session_state.suno_audio_filename = filename
+        st.session_state.suno_audio_meta = metadata
+        end_processing(owner)
+
+    media_bytes = st.session_state.get("suno_audio_bytes")
+    if media_bytes:
+        meta = st.session_state.get("suno_audio_meta") or {}
+        filename = st.session_state.get("suno_audio_filename") or "suno_musica.mp3"
+
+        st.divider()
+        st.success("MP3 preparado com sucesso!")
+        if meta.get("title"):
+            st.write(f"**Título:** {meta['title']}")
+        if meta.get("uploader"):
+            st.write(f"**Criador:** {meta['uploader']}")
+        if meta.get("duration"):
+            duration = int(float(meta["duration"]))
+            minutes, seconds = divmod(duration, 60)
+            hours, minutes = divmod(minutes, 60)
+            duration_text = (
+                f"{hours}:{minutes:02d}:{seconds:02d}"
+                if hours
+                else f"{minutes}:{seconds:02d}"
+            )
+            st.write(f"**Duração:** {duration_text}")
+        if meta.get("filesize"):
+            st.write(f"**Tamanho:** {meta['filesize'] / (1024 * 1024):.1f} MB")
+        if meta.get("origin"):
+            st.caption(f"Origem técnica: {meta['origin']}")
+
+        st.download_button(
+            "Baixar MP3",
+            icon=":material/download:",
+            on_click=release_all_controls,
+            data=media_bytes,
+            file_name=filename,
+            mime="audio/mpeg",
+            width="stretch",
+        )
+
+    st.info(
+        "O módulo trabalha apenas com links acessíveis pelo Suno e não tenta "
+        "contornar login, conteúdo privado ou bloqueios HTTP da plataforma."
+    )
+
+
+def clear_base64_encode() -> None:
+    st.session_state.base64_encoded_value = None
+    st.session_state.base64_encode_input = ""
+
+
+def clear_base64_decode() -> None:
+    st.session_state.base64_decoded_bytes = None
+    st.session_state.base64_decoded_text = None
+    st.session_state.base64_decode_input = ""
+
+
+def render_base64_tool() -> None:
+    fa_heading("fa-solid fa-code", "Codificar/Decodificar (Base64)")
+    st.caption(
+        "Converta texto UTF-8 para Base64 ou decodifique um Base64 de volta para texto. "
+        "O processamento acontece localmente no servidor do aplicativo."
+    )
+
+    operation = st.radio(
+        "Operação",
+        ["Codificar", "Decodificar"],
+        horizontal=True,
+        key="base64_operation",
+    )
+
+    if operation == "Codificar":
+        with st.form("base64_encode_form", clear_on_submit=False):
+            source_text = st.text_area(
+                "Texto para codificar",
+                height=180,
+                placeholder="Digite ou cole o texto aqui...",
+                key="base64_encode_input",
+            )
+            col_action, col_clear = st.columns([3, 1])
+            with col_action:
+                submitted = st.form_submit_button(
+                    "Codificar em Base64",
+                    icon=":material/code:",
+                    width="stretch",
+                )
+            with col_clear:
+                st.form_submit_button(
+                    "Limpar",
+                    icon=":material/clear_all:",
+                    width="stretch",
+                    on_click=clear_base64_encode,
+                )
+
+        if submitted:
+            if not source_text:
+                st.error("Digite um texto para codificar.")
+                st.session_state.base64_encoded_value = None
+            else:
+                st.session_state.base64_encoded_value = encode_text_base64(source_text)
+
+        encoded = st.session_state.get("base64_encoded_value")
+        if encoded is not None:
+            st.divider()
+            st.success("Texto codificado com sucesso!")
+            st.caption(
+                f"Entrada: {len(source_text.encode('utf-8')) if source_text else 0} bytes · "
+                f"Base64: {len(encoded)} caracteres"
+            )
+            st.code(encoded, language=None, wrap_lines=True)
+            st.download_button(
+                "Baixar Base64 (.txt)",
+                icon=":material/download:",
+                data=encoded.encode("utf-8"),
+                file_name="base64_codificado.txt",
+                mime="text/plain; charset=utf-8",
+                width="stretch",
+            )
+
+    else:
+        with st.form("base64_decode_form", clear_on_submit=False):
+            encoded_text = st.text_area(
+                "Base64 para decodificar",
+                height=180,
+                placeholder="Cole o conteúdo Base64 aqui...",
+                key="base64_decode_input",
+            )
+            col_action, col_clear = st.columns([3, 1])
+            with col_action:
+                submitted = st.form_submit_button(
+                    "Decodificar Base64",
+                    icon=":material/data_object:",
+                    width="stretch",
+                )
+            with col_clear:
+                st.form_submit_button(
+                    "Limpar",
+                    icon=":material/clear_all:",
+                    width="stretch",
+                    on_click=clear_base64_decode,
+                )
+
+        if submitted:
+            try:
+                decoded_bytes, decoded_text = decode_base64_text(encoded_text)
+            except ValueError as exc:
+                st.session_state.base64_decoded_bytes = None
+                st.session_state.base64_decoded_text = None
+                st.error(str(exc))
+            else:
+                st.session_state.base64_decoded_bytes = decoded_bytes
+                st.session_state.base64_decoded_text = decoded_text
+
+        decoded_bytes = st.session_state.get("base64_decoded_bytes")
+        decoded_text = st.session_state.get("base64_decoded_text")
+        if decoded_bytes is not None:
+            st.divider()
+            st.success("Base64 decodificado com sucesso!")
+            st.caption(f"Resultado: {len(decoded_bytes)} bytes")
+
+            if decoded_text is not None:
+                st.code(decoded_text, language=None, wrap_lines=True)
+                st.download_button(
+                    "Baixar texto decodificado (.txt)",
+                    icon=":material/download:",
+                    data=decoded_bytes,
+                    file_name="base64_decodificado.txt",
+                    mime="text/plain; charset=utf-8",
+                    width="stretch",
+                )
+            else:
+                st.warning(
+                    "O Base64 foi decodificado corretamente, mas o conteúdo não é texto UTF-8. "
+                    "Você pode baixar os bytes originais abaixo."
+                )
+                st.download_button(
+                    "Baixar conteúdo decodificado (.bin)",
+                    icon=":material/download:",
+                    data=decoded_bytes,
+                    file_name="base64_decodificado.bin",
+                    mime="application/octet-stream",
+                    width="stretch",
+                )
+
 
 def render_access_manager() -> None:
     actor_email = st.session_state.auth_email
@@ -1057,6 +1345,8 @@ def main() -> None:
         "Baixar do YouTube",
         "Baixar do Instagram",
         "Baixar do Facebook",
+        "Baixar do Suno",
+        "Codificar/Decodificar (Base64)",
     ]
 
     # O módulo simplesmente não existe na navegação de quem tem dev = 0.
@@ -1090,6 +1380,10 @@ def main() -> None:
         render_instagram_downloader()
     elif module == "Baixar do Facebook":
         render_facebook_downloader()
+    elif module == "Baixar do Suno":
+        render_suno_downloader()
+    elif module == "Codificar/Decodificar (Base64)":
+        render_base64_tool()
     elif module == "Gerenciar acessos":
         render_access_manager()
 

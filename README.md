@@ -9,6 +9,8 @@ Aplicação Streamlit com:
 5. QR Code estático em PNG.
 6. Download de vídeos do YouTube em MP4.
 7. Download de vídeos do Vimeo em MP4.
+8. Download de músicas do Suno em MP3.
+9. Codificação e decodificação de texto em Base64.
 
 > Use os módulos de download apenas para vídeos que você possui ou tem autorização para baixar.
 
@@ -19,6 +21,7 @@ streamlit_utilitarios/
 ├── streamlit_app.py
 ├── database.py
 ├── qr_utils.py
+├── base64_utils.py
 ├── youtube_utils.py
 ├── vimeo_utils.py
 ├── seed_user.py
@@ -94,6 +97,20 @@ https://www.youtube.com/watch?v=JnP501l4l6Y
 ```
 
 Você escolhe a qualidade máxima entre 360p, 480p, 720p e 1080p.
+
+## Suno
+
+O módulo **Baixar do Suno** aceita links de compartilhamento como:
+
+```text
+https://suno.com/song/UUID
+https://suno.com/s/CODIGO
+```
+
+O app prioriza o MP3 disponibilizado pela própria CDN do Suno. Se apenas um
+MP4 público estiver disponível, o FFmpeg é usado localmente como fallback para
+gerar o MP3. O módulo não tenta contornar login, conteúdo privado ou bloqueios
+HTTP da plataforma.
 
 ## Vimeo
 
